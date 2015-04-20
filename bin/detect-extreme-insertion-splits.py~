@@ -1,0 +1,51 @@
+#!/usr/bin/env python
+from __future__ import print_function, division
+from optparse import OptionParser
+import os
+import sys
+import vcf
+import pysam
+import numpy as np
+from collections import defaultdict
+
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__))[:-3] + 'python')
+
+from Indel import *
+from Alignments import *
+from BAMProcessor import *
+
+__author__ = "Louis Dijkstra"
+
+usage = """%prog [options] <bam-file> <read-length> 
+
+Outputs all the reads that have insertion splits above the read length. 
+"""
+
+def main():
+	parser = OptionParser(usage=usage)
+	parser.add_option("-v", action="store_true", dest="verbose", default=False,
+                      		help="Verbose. Prints regularly how many alignments have been processed.")
+	(options, args) = parser.parse_args()
+
+	if (len(args)!=2):
+		parser.print_help()
+		return 1
+
+	bam_reader 	= pysam.Samfile(args[0], "rb")
+	read_length 	= int(args[1])
+
+	for align in bam_reader.fetch():
+		if align.isize == 0: # alignment is unmapped
+			continue
+		n_align += 1
+		if options.verbose and n_align % 100000 == 0: 
+			print('Having processed %d alignments'%n_align, file=sys.stderr)
+		for (cigar_type, cigar_length) in align.cigar: # walk through the cigar string
+			if cigar_type == 1: # insertion
+				if cigar_length > read_length: 
+					print(align) 		
+	bam_reader.close() 
+	
+if __name__ == '__main__':
+	sys.exit(main())
+

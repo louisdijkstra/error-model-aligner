@@ -1,0 +1,131 @@
+#!/usr/bin/env python
+
+"""
+Copyright (C) 2015 Louis Dijkstra
+
+This file is part of error-model-aligner
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <http://www.gnu.org/licenses/>.
+"""
+
+from __future__ import print_function, division
+from optparse import OptionParser
+import os
+import sys
+import vcf
+import pysam
+import numpy as np
+from collections import defaultdict
+import math
+
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__))[:-3] + 'python')
+
+from Indel import *
+from Alignments import *
+from BAMProcessor import *
+
+__author__ = "Louis Dijkstra"
+
+usage = """%prog [options] <bam-file> 
+
+	<bam-file>	BAM file (sorted & indexed)
+	
+Estimates the 'epsilon_a' parameter of the model; the probability 
+that a split of a certain length occurs when there is no indel present. 
+
+The output is as follows: 
+
+	l_1 	e_1	c_1
+	l_2	e_2	c_2
+	.	.	.	
+	.	.	.	
+	.	.	.	
+	l_n	e_n	c_n
+
+where the first column denotes the length of the deletion split, the second the estimates
+and the third the confidence interval (e_i +/- c_i). 
+
+The same is repeated for the insertion splits. 
+"""
+
+class SplitData:
+	"""Keeps track of the split data"""
+	def __init__(self):
+		self.min_length = float('Inf')
+		self.max_length = float('-Inf')
+		self.count = defaultdict(float) # number of occurences of splits of certain length are stored here
+
+	def add(self, split_length): 
+		if split_length < self.min_length: 
+			self.min_length = split_length 
+		if split_length > self.max_length: 
+			self.max_length = split_length 
+		self.count[split_length] += 1 
+
+	def determineEstimates(self, n_alignments):
+		n_alignments = float(n_alignments)
+		for length in range(self.min_length, self.max_length + 1):
+			estimate = self.count[length] / n_alignments  
+			ci = 1.96 * (estimate * (1.0 - estimate)) / math.sqrt(n_alignments)
+			print("%d\t%lf\t%lf"%(length, estimate, ci)) 
+
+			
+		
+	
+def main():
+	parser = OptionParser(usage=usage)
+	parser.add_option("-v", action="store_true", dest="verbose", default=False,
+                      		help="Verbose. Prints regularly how many alignments have been processed.")
+	(options, args) = parser.parse_args()
+
+	if (len(args)!=1):
+		parser.print_help()
+		return 1
+
+	bam_reader 	= pysam.Samfile(args[0], "rb")
+	
+	n_alignments 		= 0 	# total number of alignments
+	deletion_splits 	= SplitData()
+	insertion_splits 	= SplitData()
+
+	for align in bam_reader.fetch():
+		if align.isize == 0: # alignment is unmapped
+			continue
+		n_alignments += 1
+		if options.verbose and n_alignments % 100000 == 0: 
+			print('Having processed %d alignments'%n_alignments, file=sys.stderr)
+		i = align.pos
+		for (cigar_type, cigar_length) in align.cigar: # walk through the cigar string
+			if cigar_type == 1: # insertion
+				insertion_splits.add(cigar_length)
+			elif cigar_type == 2: # deletion
+				deletion_splits.add(cigar_length) 
+			i += cigar_length 
+
+	bam_reader.close() 
+	
+	#print results to screen
+	print("*** RESULTS ***")
+	print("\nDeletions\n")
+	print("length\testimate\tCI")
+	print("------\t--------\t--")
+	deletion_splits.determineEstimates(n_alignments)
+	print("\nInsertions\n")
+	print("length\testimate\tCI")
+	print("------\t--------\t--")
+	insertion_splits.determineEstimates(n_alignments)
+
+if __name__ == '__main__':
+	sys.exit(main())
+
